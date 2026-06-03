@@ -27,7 +27,7 @@ function randomSeconds(date: Date): Date {
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
-const STORAGE_KEY = "nightcord_fakedm_fakes";
+const STORAGE_KEY = "quinns_fakedm_fakes";
 
 interface PersistedMessage {
     type: "message";
