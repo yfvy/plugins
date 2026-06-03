@@ -9,7 +9,7 @@ import "./styles.css";
 import { ChatBarButton, ChatBarButtonFactory } from "@api/ChatButtons";
 import definePlugin from "@utils/types";
 import { findStoreLazy } from "@webpack";
-import { FluxDispatcher, React, ReactDOM,SelectedChannelStore, UserStore } from "@webpack/common";
+import { FluxDispatcher, React, ReactDOM, SelectedChannelStore, UserStore } from "@webpack/common";
 
 // ─── Unique IDs ─────────────────────────────────────────────────────────────
 let _idCounter = 0;
@@ -161,15 +161,53 @@ function buildAuthor(user: any) {
     };
 }
 
+function extractUrls(text: string): string[] {
+    return text.match(/https?:\/\/[^\s]+/g) ?? [];
+}
+
 // ─── Message injection ────────────────────────────────────────────────────────
-function inject(channelId: string, author: any, content: string, date: Date, persistedId?: string) {
+async function inject(
+    channelId: string,
+    author: any,
+    content: string,
+    date: Date,
+    persistedId?: string
+) {
     const actualDate = persistedId ? date : randomSeconds(date);
     const id = persistedId ?? uniqueSnowflake(actualDate);
+    const urls = extractUrls(content);
+
+    const attachments: any[] = [];
+    
+    for (const url of urls) {
+        try {
+            const response = await fetch(url, {
+                method: "GET" // Changed from HEAD to GET for better compatibility
+            });
+
+            const type =
+                response.headers.get("content-type")?.toLowerCase() ?? "";
+
+            if (
+                type.startsWith("image/") ||
+                type.startsWith("video/")
+            ) {
+                attachments.push({
+                    id: String(attachments.length + 1),
+                    filename: url.split("/").pop() ?? "file",
+                    url,
+                    proxy_url: url,
+                    content_type: type // Added content_type field
+                });
+            }
+        } catch {}
+    }
+    
     FluxDispatcher.dispatch({
         type: "MESSAGE_CREATE",
         channelId,
         message: {
-            attachments: [], components: [], embeds: [], mention_roles: [], mentions: [],
+            attachments, components: [], embeds: [], mention_roles: [], mentions: [],
             author: buildAuthor(author),
             channel_id: channelId,
             content,
@@ -225,7 +263,11 @@ function injectCall(
         type: "MESSAGE_CREATE",
         channelId,
         message: {
-            attachments: [], components: [], embeds: [], mention_roles: [], mentions: [],
+            attachments: [], // Fixed: was referencing undefined 'attachments' variable
+            components: [], 
+            embeds: [], 
+            mention_roles: [], 
+            mentions: [],
             author: buildAuthor(caller),
             channel_id: channelId,
             content: "",
@@ -278,7 +320,7 @@ function scheduleRestore() {
     FluxDispatcher.subscribe("CONNECTION_OPEN", _restoreHandler);
 }
 
-function doRestore() {
+async function doRestore() {
     const fakes = loadPersisted();
     if (!fakes.length) return;
 
@@ -286,7 +328,7 @@ function doRestore() {
         if (f.type === "message") {
             const author = UserStore.getUser(f.authorId);
             if (!author) continue;
-            inject(f.channelId, author, f.content, new Date(f.timestamp), f.snowflakeId);
+            await inject(f.channelId, author, f.content, new Date(f.timestamp), f.snowflakeId);
         } else {
             const caller = UserStore.getUser(f.callerId);
             const other = UserStore.getUser(f.otherId);
@@ -395,13 +437,13 @@ function FakeDMPanel({ onClose, btnRect }: { onClose(): void; btnRect: DOMRect; 
         setTimeout(() => setStatus(null), 2500);
     }
 
-    function send() {
+    async function send() {
         if (!text.trim() || !channelId) return;
         const author = members.find(m => m.id === senderId) ?? me;
         if (!author) return;
         const date = new Date(dateStr);
         if (isNaN(date.getTime())) { setMsg("Invalid Date!", false); return; }
-        inject(channelId, author, text.trim(), date);
+        await inject(channelId, author, text.trim(), date);
         setText("");
         setMsg("Message injected ✓", true);
         setDateStr(toLocal(new Date(date.getTime() + 60_000)));
@@ -472,8 +514,8 @@ function FakeDMPanel({ onClose, btnRect }: { onClose(): void; btnRect: DOMRect; 
 
                 {/* Mode tabs */}
                 <div style={{ display: "flex", gap: 6, padding: "0 12px 10px" }}>
-                    <button onClick={() => setMode("message")} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: mode === "message" ? "#5865f2" : "rgba(255,255,255,0.07)", color: mode === "message" ? "#fff" : "rgba(255,255,255,0.5)" }}>💬 Message</button>
-                    <button onClick={() => setMode("call")} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: mode === "call" ? "#5865f2" : "rgba(255,255,255,0.07)", color: mode === "call" ? "#fff" : "rgba(255,255,255,0.5)" }}>📞 Call</button>
+                    <button onClick={() => setMode("message")} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: mode === "message" ? "#5865f2" : "rgba(255,255,255,0.07)", color: mode === "message" ? "#fff" : "rgba(255,255,255,0.5)" }}>💬 Mensaje</button>
+                    <button onClick={() => setMode("call")} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: mode === "call" ? "#5865f2" : "rgba(255,255,255,0.07)", color: mode === "call" ? "#fff" : "rgba(255,255,255,0.5)" }}>📞 LLamada</button>
                 </div>
 
                 {!isInDMOrGroup ? (
@@ -482,27 +524,27 @@ function FakeDMPanel({ onClose, btnRect }: { onClose(): void; btnRect: DOMRect; 
                     <>
                         {SenderRow}
                         <div className="fdm-date-row">
-                            <span className="fdm-date-label">Date :</span>
+                            <span className="fdm-date-label">Fecha :</span>
                             <input type="datetime-local" className="fdm-date-input" value={dateStr} onChange={e => setDateStr(e.target.value)} />
-                            <button className="fdm-date-now" onClick={() => setDateStr(toLocal(new Date()))}>Now</button>
+                            <button className="fdm-date-now" onClick={() => setDateStr(toLocal(new Date()))}>Ahora</button>
                         </div>
                         <div className="fdm-input-row">
                             <textarea
                                 ref={textareaRef}
                                 className="fdm-textarea"
                                 rows={2}
-                                placeholder={"Message… (↵ send)"}
+                                placeholder={"Pon algo..."}
                                 value={text}
                                 onChange={e => setText(e.target.value)}
                                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                             />
                             <div className="fdm-actions">
-                                <button className="fdm-send-btn" disabled={!text.trim()} onClick={send}>Send</button>
+                                <button className="fdm-send-btn" disabled={!text.trim()} onClick={send}>Crear</button>
                                 <button className="fdm-clear-btn" onClick={() => {
                                     if (!channelId) return;
                                     const n = clearFakes(channelId);
                                     setMsg(`${n} msg${n !== 1 ? "s" : ""} deleted ✓`, true);
-                                }}>🗑 Clear</button>
+                                }}>🗑 Eliminar</button>
                             </div>
                         </div>
                     </>
@@ -511,8 +553,8 @@ function FakeDMPanel({ onClose, btnRect }: { onClose(): void; btnRect: DOMRect; 
                         {CallerRow}
 
                         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px" }}>
-                            <button onClick={() => setCallMissed(false)} style={{ flex: 1, padding: "4px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: !callMissed ? "#3ba55c" : "rgba(255,255,255,0.07)", color: !callMissed ? "#fff" : "rgba(255,255,255,0.45)" }}>✅ Answered</button>
-                            <button onClick={() => setCallMissed(true)} style={{ flex: 1, padding: "4px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: callMissed ? "#ed4245" : "rgba(255,255,255,0.07)", color: callMissed ? "#fff" : "rgba(255,255,255,0.45)" }}>❌ Missed</button>
+                            <button onClick={() => setCallMissed(false)} style={{ flex: 1, padding: "4px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: !callMissed ? "#3ba55c" : "rgba(255,255,255,0.07)", color: !callMissed ? "#fff" : "rgba(255,255,255,0.45)" }}>✅ Respondida</button>
+                            <button onClick={() => setCallMissed(true)} style={{ flex: 1, padding: "4px 0", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: callMissed ? "#ed4245" : "rgba(255,255,255,0.07)", color: callMissed ? "#fff" : "rgba(255,255,255,0.45)" }}>❌ Perdida</button>
                             {!callMissed && (
                                 <>
                                     <input type="number" min="0" step="1" className="fdm-date-input" style={{ width: 52, textAlign: "center", flexShrink: 0 }} value={callDuration} onChange={e => setCallDuration(e.target.value)} />
@@ -522,18 +564,18 @@ function FakeDMPanel({ onClose, btnRect }: { onClose(): void; btnRect: DOMRect; 
                         </div>
 
                         <div className="fdm-date-row">
-                            <span className="fdm-date-label">Date :</span>
+                            <span className="fdm-date-label">Fecha :</span>
                             <input type="datetime-local" className="fdm-date-input" value={dateStr} onChange={e => setDateStr(e.target.value)} />
-                            <button className="fdm-date-now" onClick={() => setDateStr(toLocal(new Date()))}>Now</button>
+                            <button className="fdm-date-now" onClick={() => setDateStr(toLocal(new Date()))}>Ahora</button>
                         </div>
 
                         <div style={{ display: "flex", gap: 6, padding: "6px 12px 4px" }}>
-                            <button className="fdm-send-btn" style={{ flex: 1 }} onClick={sendCall}>Inject Call</button>
+                            <button className="fdm-send-btn" style={{ flex: 1 }} onClick={sendCall}>Crear Llamada</button>
                             <button className="fdm-clear-btn" onClick={() => {
                                 if (!channelId) return;
                                 const n = clearFakes(channelId);
                                 setMsg(`${n} msg${n !== 1 ? "s" : ""} deleted ✓`, true);
-                            }}>🗑 Clear</button>
+                            }}>🗑 Eliminar</button>
                         </div>
                     </>
                 )}
@@ -574,7 +616,7 @@ const FakeDMButton: ChatBarButtonFactory = (props: any) => {
 
     return (
         <div onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()} onMouseUp={e => e.stopPropagation()} style={{ display: "contents" }}>
-            <ChatBarButton tooltip="Fake DM — inject a fake message" onClick={handleClick}>
+            <ChatBarButton tooltip="Fake dm — crea mensajes / llamadas falsas " onClick={handleClick}>
                 <FakeDMIcon />
             </ChatBarButton>
             {btnRect && ReactDOM.createPortal(
@@ -587,10 +629,10 @@ const FakeDMButton: ChatBarButtonFactory = (props: any) => {
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 export default definePlugin({
-    name: "FakeDM",
+    name: "Fake dms/calls",
     enabledByDefault: true,
-    description: "Injects fake local messages into a DM or group DM. Button in the text bar. Persists across restarts.",
-    authors: [{ name: "Nightcord", id: 0n }],
+    description: "Crea mensajes / llamadas falsas, en dm's y grupos. Mantiene persistencia aunque reinicies discord o cambies de canal.",
+    authors: [{ name: "quinn", id: 1189286788724953208n }],
     dependencies: ["ChatInputButtonAPI"],
 
     chatBarButton: {
